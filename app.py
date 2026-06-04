@@ -104,3 +104,31 @@ if uploaded_zip is not None and model is not None:
                             "Nama File": os.path.basename(file_name),
                             "Prediksi": "Gagal diproses",
                             "Tingkat Keyakinan": "0%"
+                        })
+                    
+                    # Manajemen Pengosongan Memori Kritis (Pencegah Crash)
+                    if idx % 10 == 0:  # Setiap 10 gambar, bersihkan sisa memori TensorFlow backend
+                        tf.keras.backend.clear_session()
+                    
+                    # Update status progres
+                    progress_bar.progress((idx + 1) / total_images)
+                
+                # Bersihkan teks status berjalan jika sudah selesai seluruhnya
+                status_text.empty()
+                
+                # Tampilkan hasil rekapitulasi data akhir
+                st.write("### 📊 Hasil Klasifikasi Keseluruhan:")
+                st.dataframe(results, use_container_width=True)
+                
+                total_pos = sum(1 for r in results if r["Prediksi"] == "Positive")
+                total_neg = sum(1 for r in results if r["Prediksi"] == "Negative")
+                total_fail = sum(1 for r in results if r["Prediksi"] == "Gagal diproses")
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Total Positive", total_pos)
+                col2.metric("Total Negative", total_neg)
+                if total_fail > 0:
+                    col3.metric("Gagal", total_fail)
+                
+    except Exception as e:
+        st.error(f"Terjadi kesalahan sistem saat membuka berkas ZIP: {e}")
