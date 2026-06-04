@@ -25,7 +25,7 @@ MODEL_PATH = 'image_classification_model.h5'
 def load_model():
     if os.path.exists(MODEL_PATH):
         try:
-            # Gunakan compile=False agar tidak terjadi error versi optimizer saat memuat model
+            # Menggunakan compile=False agar aman dari perbedaan versi optimizer keras
             return tf.keras.models.load_model(MODEL_PATH, compile=False)
         except Exception as e:
             st.error(f"Gagal memuat model: {e}")
@@ -50,35 +50,39 @@ if uploaded_zip is not None and model is not None:
     
     try:
         with zipfile.ZipFile(uploaded_zip) as z:
-            # Ambil semua daftar file di dalam ZIP
-            file_list = z.namelist()
+            # 1. Ambil semua daftar file di dalam ZIP
+            all_files = z.namelist()
             
-            # Saring file: Hanya ambil file gambar dan abaikan folder tersembunyi sistem seperti __MACOSX atau .DS_Store
+            # 2. Saring hanya file gambar valid, abaikan folder sampah bawaan sistem (__MACOSX atau file .DS_Store)
             valid_extensions = ('.jpg', '.jpeg', '.png')
             image_files = [
-                f for f in file_list 
+                f for f in all_files 
                 if f.lower().endswith(valid_extensions) and not f.startswith('__MACOSX/') and not os.path.basename(f).startswith('.')
             ]
             
-            if not image_files:
+            # Hitung jumlah gambar yang ditemukan
+            total_images = len(image_files)
+            
+            if total_images == 0:
                 st.warning("Tidak ditemukan file gambar (.jpg, .jpeg, .png) yang valid di dalam file ZIP tersebut.")
             else:
-                st.info(f"Ditemukan {len(image_files)} gambar. Memulai proses prediksi...")
+                st.info(f"Ditemukan {total_images} gambar. Memulai proses prediksi...")
                 
-                # Progress bar untuk visualisasi komponen web
+                # Buat progress bar
                 progress_bar = st.progress(0)
                 results = []
                 
+                # Perulangan untuk memproses satu per satu gambar
                 for idx, file_name in enumerate(image_files):
                     try:
                         # Membaca data gambar langsung dari memori ZIP
                         img_data = z.read(file_name)
                         image = Image.open(io.BytesIO(img_data))
                         
-                        # Ubah ukuran gambar sesuai input arsitektur model Anda (150x150)
+                        # Ubah ukuran gambar sesuai arsitektur model (150x150)
                         img_resized = image.resize((150, 150))
                         
-                        # Pastikan gambar dikonversi ke RGB (mengatasi masalah gambar bertipe RGBA/Grayscale)
+                        # Paksa konversi ke mode RGB (menghindari error jika gambar bertipe RGBA/Grayscale)
                         if img_resized.mode != 'RGB':
                             img_resized = img_resized.convert('RGB')
                             
@@ -87,36 +91,36 @@ if uploaded_zip is not None and model is not None:
                         # Tambahkan dimensi batch (1, 150, 150, 3)
                         img_batch = np.expand_dims(img_array, axis=0)
                         
-                        # Prediksi menggunakan model
+                        # Prediksi menggunakan model Anda
                         predictions = model.predict(img_batch, verbose=0)
                         
-                        # Hitung probabilitas menggunakan Softmax jika output model berupa logits
+                        # Ambil skor probabilitas tertinggi
                         score = tf.nn.softmax(predictions[0])
                         predicted_class = CLASS_NAMES[np.argmax(score)]
                         confidence = 100 * np.max(score)
                         
-                        # Simpan data hasil prediksi
+                        # Simpan hasil prediksi gambar ke dalam list
                         results.append({
                             "Nama File": os.path.basename(file_name),
                             "Prediksi": predicted_class,
                             "Tingkat Keyakinan": f"{confidence:.2f}%"
                         })
                     except Exception as img_err:
-                        # Jika ada satu gambar rusak, proses tidak akan berhenti total
+                        # Jika ada 1 gambar korup/rusak, loop tidak akan berhenti total
                         results.append({
                             "Nama File": os.path.basename(file_name),
                             "Prediksi": "Gagal diproses",
                             "Tingkat Keyakinan": "0%"
                         })
                     
-                    # Update status progress bar
-                    progress_bar.progress((idx + 1) / len(image_files))
+                    # Update status progress bar menggunakan nilai total_images yang berupa angka/integer
+                    progress_bar.progress((idx + 1) / total_images)
                 
-                # Tampilkan tabel hasil akhir
+                # Tampilkan tabel hasil akhir jika semua selesai
                 st.write("### 📊 Hasil Klasifikasi Keseluruhan:")
                 st.dataframe(results, use_container_width=True)
                 
-                # Menghitung statistik rekapitulasi hasil prediksi
+                # Menghitung statistik total rekapitulasi hasil prediksi
                 total_pos = sum(1 for r in results if r["Prediksi"] == "Positive")
                 total_neg = sum(1 for r in results if r["Prediksi"] == "Negative")
                 total_fail = sum(1 for r in results if r["Prediksi"] == "Gagal diproses")
