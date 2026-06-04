@@ -7,52 +7,59 @@ import zipfile
 import io
 import gc
 
-# Konfigurasi Halaman
-st.set_page_config(page_title="Klasifikasi Gambar ZIP", page_icon="📷", layout="centered")
+# 1. Konfigurasi Halaman Web Streamlit
+st.set_page_config(
+    page_title="Aplikasi Klasifikasi Gambar (ZIP)",
+    page_icon="📷",
+    layout="centered"
+)
 
-st.title("📷 Klasifikasi Gambar Massal via ZIP")
-st.write("Aplikasi akan **otomatis berjalan** sesaat setelah file `.zip` selesai diunggah.")
+# Judul Utama di Layar
+st.title("📷 Aplikasi Klasifikasi Gambar via ZIP")
+st.write("Unggah berkas **.zip** berisi kumpulan foto/gambar untuk mendeteksi kategori secara otomatis.")
 
+# Pengaturan Kelas dan Nama File Model h5 Anda
 CLASS_NAMES = ['Negative', 'Positive']
 MODEL_PATH = 'image_classification_model.h5'
 
-# Memuat Model
+# 2. Fungsi untuk Memuat Model Keras (.h5) secara Aman
 @st.cache_resource
 def load_model():
     if os.path.exists(MODEL_PATH):
         try:
+            # Menggunakan compile=False agar aman dari perbedaan versi library di server
             return tf.keras.models.load_model(MODEL_PATH, compile=False)
         except Exception as e:
-            st.error(f"Gagal memuat model: {e}")
+            st.error(f"Gagal memuat file model: {e}")
             return None
     return None
 
+# Memuat model secara otomatis saat web dibuka
 model = load_model()
 
 if model is None:
-    st.error(f"❌ File model `{MODEL_PATH}` tidak ditemukan di repositori GitHub Anda. Pastikan file model sudah di-upload ke folder yang sama dengan `app.py`!")
+    st.error(f"❌ File model `{MODEL_PATH}` tidak ditemukan di GitHub Anda. Pastikan file model .h5 sudah di-upload ke folder yang sama dengan app.py!")
 else:
     st.success("✅ Model berhasil dimuat dan siap digunakan!")
 
-# Widget Unggah ZIP (Otomatis memicu kode di bawahnya saat upload selesai)
-uploaded_zip = st.file_uploader("Unggah file ZIP gambar di sini...", type=["zip"])
+# 3. Tombol Unggah File ZIP Gambar
+uploaded_zip = st.file_uploader("Pilih dan unggah file ZIP berisi foto gambar...", type=["zip"])
 
+# Jalankan proses klasifikasi otomatis jika file ZIP sudah selesai di-upload
 if uploaded_zip is not None:
     if model is None:
-        st.error("Proses dihentikan karena model belum berhasil dimuat.")
+        st.error("Proses tidak dapat dijalankan karena model .h5 belum berhasil dimuat.")
     else:
         st.write("---")
-        st.info("📦 Berkas ZIP terdeteksi! Membuka isi file...")
+        st.info("📦 Berkas ZIP terdeteksi! Membuka dan membaca isi file...")
         
         try:
             with zipfile.ZipFile(uploaded_zip) as z:
-                # Ambil daftar semua berkas di dalam ZIP
+                # Mengambil semua daftar file di dalam ZIP
                 all_files = z.namelist()
                 
-                # Tampilkan log pencarian untuk kebutuhan pelacakan Anda
-                st.write(f"🔍 Total item di dalam ZIP (termasuk folder): {len(all_files)}")
-                
-                # Saring hanya file gambar valid (.jpg, .jpeg, .png)
+                # Saring hanya file yang berupa gambar (.jpg, .jpeg, .png)
+                # Serta otomatis mengabaikan file sampah sistem bawaan Mac/Windows (__MACOSX atau .DS_Store)
                 valid_extensions = ('.jpg', '.jpeg', '.png')
                 image_files = [
                     f for f in all_files 
@@ -62,72 +69,85 @@ if uploaded_zip is not None:
                 total_images = len(image_files)
                 
                 if total_images == 0:
-                    st.warning("⚠️ AWAS: Tidak ditemukan file gambar (.jpg, .jpeg, .png) di dalam file ZIP Anda!")
-                    st.write("Daftar file yang Anda unggah justru berisi ini:")
-                    st.code(all_files[:10]) # Menampilkan 10 file pertama yang ada di dalam ZIP untuk cek kesalahan
+                    st.warning("⚠️ AWAS: Tidak ditemukan file gambar (.jpg, .jpeg, .png) yang valid di dalam file ZIP Anda!")
+                    st.write("Isi file ZIP yang Anda unggah justru mendeteksi file-file ini:")
+                    st.code(all_files[:10])
                 else:
-                    st.success(f"🚀 Menemukan {total_images} gambar valid. Memulai prediksi otomatis saat ini juga...")
+                    st.success(f"🚀 Menemukan {total_images} gambar. Memulai proses prediksi otomatis...")
                     
+                    # Membuat visualisasi loading progress bar
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     results = []
 
-                    # Proses iterasi satu per satu gambar
+                    # Perulangan (looping) untuk memproses gambar satu per satu
                     for idx, file_name in enumerate(image_files):
                         status_text.text(f"Menganalisis ({idx + 1}/{total_images}): {os.path.basename(file_name)}")
                         
                         try:
-                            # Membaca data gambar langsung dari memori ZIP
+                            # Membaca bit data gambar langsung dari memori ZIP
                             img_data = z.read(file_name)
+                            
                             with Image.open(io.BytesIO(img_data)) as img:
-                                # Paksa konversi ke RGB dan samakan ukuran input model (150x150)
-                                img_resized = img.convert('RGB').resize((150, 150))
+                                # SOLUSI UTAMA: Paksa konversi ke 'RGB' untuk membuang channel ke-4 (Alpha/Transparansi)
+                                # Langkah ini mencegah error shape=(None, 150, 150, 4)
+                                img_rgb = img.convert('RGB')
+                                
+                                # Ubah resolusi gambar ke 150x150 sesuai dengan arsitektur model CNN Anda
+                                img_resized = img_rgb.resize((150, 150))
+                                
+                                # Mengubah gambar menjadi bentuk array matriks angka
                                 img_array = np.array(img_resized)
                             
-                            # Menyelaraskan dimensi input batch (1, 150, 150, 3)
+                            # Menambahkan dimensi batch agar bentuknya pas menjadi (1, 150, 150, 3)
                             img_batch = np.expand_dims(img_array, axis=0)
                             
-                            # Prediksi lewat model h5
+                            # Melakukan prediksi klasifikasi menggunakan model h5 Anda
                             predictions = model.predict(img_batch, verbose=0)
-                            score = tf.nn.softmax(predictions[0])
                             
+                            # Menggunakan fungsi Softmax untuk mengambil keputusan kelas tertinggi
+                            score = tf.nn.softmax(predictions[0])
                             predicted_class = CLASS_NAMES[np.argmax(score)]
                             confidence = 100 * np.max(score)
                             
+                            # Menyimpan hasil data ke dalam list rekapitulasi
                             results.append({
                                 "Nama File": os.path.basename(file_name),
                                 "Prediksi": predicted_class,
                                 "Tingkat Keyakinan": f"{confidence:.2f}%"
                             })
+                            
                         except Exception as img_err:
+                            # Jika ada salah satu gambar yang rusak, program tidak akan mati total
                             results.append({
                                 "Nama File": os.path.basename(file_name),
                                 "Prediksi": "Gagal (Format Rusak)",
                                 "Tingkat Keyakinan": "0%"
                             })
                         
-                        # Update progress bar secara langsung
+                        # Memperbarui tampilan progress bar di halaman web
                         progress_bar.progress((idx + 1) / total_images)
                         
-                        # Pengosongan memori berkala untuk mencegah server crash
+                        # MANAJEMEN MEMORI RAM: Kosongkan sisa sampah memori setiap kelipatan 10 gambar
                         if (idx + 1) % 10 == 0:
                             tf.keras.backend.clear_session()
                             gc.collect()
 
-                    # Bersihkan teks status berjalan
+                    # Menghapus teks status berjalan jika seluruh proses sudah selesai
                     status_text.empty()
                     
-                    # Tampilkan tabel output akhir
+                    # 4. Menampilkan Hasil Akhir di Layar Web dalam Bentuk Tabel
                     st.write("### 📊 Hasil Klasifikasi Keseluruhan:")
                     st.dataframe(results, use_container_width=True)
                     
-                    # Tampilkan statistik jumlah ringkas
+                    # Menghitung total statistik prediksi kelas
                     total_pos = sum(1 for r in results if r["Prediksi"] == "Positive")
                     total_neg = sum(1 for r in results if r["Prediksi"] == "Negative")
                     
+                    # Menampilkan metrik total angka di bawah tabel
                     col1, col2 = st.columns(2)
-                    col1.metric("Total Kategori Positive", total_pos)
-                    col2.metric("Total Kategori Negative", total_neg)
+                    col1.metric("Total Kategori Positive (Retak)", total_pos)
+                    col2.metric("Total Kategori Negative (Aman)", total_neg)
                     
         except Exception as e:
-            st.error(f"❌ File ZIP Anda rusak atau tidak bisa dibuka oleh sistem server: {e}")
+            st.error(f"❌ Terjadi kesalahan sistem saat membuka berkas ZIP: {e}")
