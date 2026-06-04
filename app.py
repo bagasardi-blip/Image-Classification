@@ -39,7 +39,7 @@ else:
     st.success("Model berhasil dimuat!")
 
 # Widget unggah gambar
-uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Pilih gambar...", type=["zip"])
 
 if uploaded_file is not None:
     # Menampilkan gambar yang diunggah
