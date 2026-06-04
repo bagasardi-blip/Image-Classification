@@ -20,7 +20,7 @@ MODEL_PATH = 'image_classification_model.h5'
 # =========================================================================
 # PASTE LINK GOOGLE DRIVE KAMU DI BAWAH INI (Ganti teks di dalam tanda kutip)
 # =========================================================================
-GDrive_Link = https://drive.google.com/file/d/1zYttdVoEhptiajyCjxuAcClAXxYxllJT/view?usp=sharing
+GDrive_Link = "https://drive.google.com/file/d/1zYttdVoEhptiajyCjxuAcClAXxYxllJT/view?usp=sharing"
 
 # Fungsi untuk mengubah link Google Drive biasa menjadi link download langsung
 def get_direct_download_link(url):
