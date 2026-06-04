@@ -7,23 +7,21 @@ import zipfile
 import io
 import gc
 
-# 1. Konfigurasi Halaman
-st.set_page_config(page_title="Klasifikasi Gambar ZIP", page_icon="📷")
+# Konfigurasi Halaman
+st.set_page_config(page_title="Klasifikasi Gambar ZIP", page_icon="📷", layout="centered")
 
-st.title("📷 Klasifikasi Gambar Massal (ZIP)")
-st.write("Aplikasi ini dirancang untuk memproses banyak gambar dengan penggunaan memori rendah.")
+st.title("📷 Klasifikasi Gambar Massal via ZIP")
+st.write("Aplikasi akan **otomatis berjalan** sesaat setelah file `.zip` selesai diunggah.")
 
 CLASS_NAMES = ['Negative', 'Positive']
 MODEL_PATH = 'image_classification_model.h5'
 
-# 2. Fungsi Load Model dengan Decorator Cache
+# Memuat Model
 @st.cache_resource
 def load_model():
     if os.path.exists(MODEL_PATH):
         try:
-            # Memuat model tanpa optimizer untuk menghemat RAM
-            model = tf.keras.models.load_model(MODEL_PATH, compile=False)
-            return model
+            return tf.keras.models.load_model(MODEL_PATH, compile=False)
         except Exception as e:
             st.error(f"Gagal memuat model: {e}")
             return None
@@ -32,83 +30,104 @@ def load_model():
 model = load_model()
 
 if model is None:
-    st.warning("File model `.h5` tidak ditemukan. Pastikan sudah diunggah ke GitHub.")
+    st.error(f"❌ File model `{MODEL_PATH}` tidak ditemukan di repositori GitHub Anda. Pastikan file model sudah di-upload ke folder yang sama dengan `app.py`!")
 else:
-    st.success("Model siap!")
+    st.success("✅ Model berhasil dimuat dan siap digunakan!")
 
-# 3. Antarmuka Unggah
-uploaded_zip = st.file_uploader("Unggah file ZIP gambar", type=["zip"])
+# Widget Unggah ZIP (Otomatis memicu kode di bawahnya saat upload selesai)
+uploaded_zip = st.file_uploader("Unggah file ZIP gambar di sini...", type=["zip"])
 
-if uploaded_zip is not None and model is not None:
-    try:
-        with zipfile.ZipFile(uploaded_zip) as z:
-            # Ambil daftar file
-            all_info = z.infolist()
-            valid_extensions = ('.jpg', '.jpeg', '.png')
-            
-            # Saring file gambar (abaikan folder dan file sistem)
-            image_files = [
-                info.filename for info in all_info 
-                if info.filename.lower().endswith(valid_extensions) 
-                and not info.filename.startswith('__MACOSX/') 
-                and not os.path.basename(info.filename).startswith('.')
-            ]
-            
-            total = len(image_files)
-            
-            if total == 0:
-                st.warning("Tidak ada gambar valid di dalam ZIP.")
-            else:
-                st.info(f"Memproses {total} gambar...")
+if uploaded_zip is not None:
+    if model is None:
+        st.error("Proses dihentikan karena model belum berhasil dimuat.")
+    else:
+        st.write("---")
+        st.info("📦 Berkas ZIP terdeteksi! Membuka isi file...")
+        
+        try:
+            with zipfile.ZipFile(uploaded_zip) as z:
+                # Ambil daftar semua berkas di dalam ZIP
+                all_files = z.namelist()
                 
-                # Wadah hasil
-                progress_bar = st.progress(0)
-                placeholder = st.empty()
-                results = []
-
-                # 4. Proses Satu Per Satu dengan Manajemen Memori Ketat
-                for i, file_path in enumerate(image_files):
-                    with placeholder.container():
-                        st.text(f"Sedang memproses ({i+1}/{total}): {os.path.basename(file_path)}")
-                    
-                    try:
-                        # Baca gambar
-                        img_data = z.read(file_path)
-                        with Image.open(io.BytesIO(img_data)) as img:
-                            img = img.convert('RGB').resize((150, 150))
-                            img_array = np.array(img) / 255.0 # Normalisasi manual jika diperlukan
-                        
-                        img_batch = np.expand_dims(img_array, axis=0)
-                        
-                        # Prediksi
-                        preds = model.predict(img_batch, verbose=0)
-                        score = tf.nn.softmax(preds[0])
-                        
-                        label = CLASS_NAMES[np.argmax(score)]
-                        conf = f"{100 * np.max(score):.2f}%"
-                        
-                        results.append({"File": os.path.basename(file_path), "Hasil": label, "Skor": conf})
-                        
-                    except Exception as e:
-                        results.append({"File": os.path.basename(file_path), "Hasil": "Error", "Skor": "0%"})
-                    
-                    # UPDATE PROGRESS
-                    progress_bar.progress((i + 1) / total)
-                    
-                    # PAKSA BERSIHKAN MEMORI (CRITICAL)
-                    if (i + 1) % 5 == 0:
-                        tf.keras.backend.clear_session()
-                        gc.collect() # Garbagge Collector Python
-
-                # 5. Tampilkan Hasil Akhir
-                placeholder.empty()
-                st.write("### ✅ Selesai! Hasil Analisis:")
-                st.dataframe(results, use_container_width=True)
+                # Tampilkan log pencarian untuk kebutuhan pelacakan Anda
+                st.write(f"🔍 Total item di dalam ZIP (termasuk folder): {len(all_files)}")
                 
-                # Ringkasan
-                pos = sum(1 for r in results if r["Hasil"] == "Positive")
-                neg = sum(1 for r in results if r["Hasil"] == "Negative")
-                st.write(f"**Ringkasan:** Positive: {pos} | Negative: {neg}")
+                # Saring hanya file gambar valid (.jpg, .jpeg, .png)
+                valid_extensions = ('.jpg', '.jpeg', '.png')
+                image_files = [
+                    f for f in all_files 
+                    if f.lower().endswith(valid_extensions) and not f.startswith('__MACOSX/') and not os.path.basename(f).startswith('.')
+                ]
+                
+                total_images = len(image_files)
+                
+                if total_images == 0:
+                    st.warning("⚠️ AWAS: Tidak ditemukan file gambar (.jpg, .jpeg, .png) di dalam file ZIP Anda!")
+                    st.write("Daftar file yang Anda unggah justru berisi ini:")
+                    st.code(all_files[:10]) # Menampilkan 10 file pertama yang ada di dalam ZIP untuk cek kesalahan
+                else:
+                    st.success(f"🚀 Menemukan {total_images} gambar valid. Memulai prediksi otomatis saat ini juga...")
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results = []
 
-    except Exception as e:
-        st.error(f"Terjadi kesalahan ZIP: {e}")
+                    # Proses iterasi satu per satu gambar
+                    for idx, file_name in enumerate(image_files):
+                        status_text.text(f"Menganalisis ({idx + 1}/{total_images}): {os.path.basename(file_name)}")
+                        
+                        try:
+                            # Membaca data gambar langsung dari memori ZIP
+                            img_data = z.read(file_name)
+                            with Image.open(io.BytesIO(img_data)) as img:
+                                # Paksa konversi ke RGB dan samakan ukuran input model (150x150)
+                                img_resized = img.convert('RGB').resize((150, 150))
+                                img_array = np.array(img_resized)
+                            
+                            # Menyelaraskan dimensi input batch (1, 150, 150, 3)
+                            img_batch = np.expand_dims(img_array, axis=0)
+                            
+                            # Prediksi lewat model h5
+                            predictions = model.predict(img_batch, verbose=0)
+                            score = tf.nn.softmax(predictions[0])
+                            
+                            predicted_class = CLASS_NAMES[np.argmax(score)]
+                            confidence = 100 * np.max(score)
+                            
+                            results.append({
+                                "Nama File": os.path.basename(file_name),
+                                "Prediksi": predicted_class,
+                                "Tingkat Keyakinan": f"{confidence:.2f}%"
+                            })
+                        except Exception as img_err:
+                            results.append({
+                                "Nama File": os.path.basename(file_name),
+                                "Prediksi": "Gagal (Format Rusak)",
+                                "Tingkat Keyakinan": "0%"
+                            })
+                        
+                        # Update progress bar secara langsung
+                        progress_bar.progress((idx + 1) / total_images)
+                        
+                        # Pengosongan memori berkala untuk mencegah server crash
+                        if (idx + 1) % 10 == 0:
+                            tf.keras.backend.clear_session()
+                            gc.collect()
+
+                    # Bersihkan teks status berjalan
+                    status_text.empty()
+                    
+                    # Tampilkan tabel output akhir
+                    st.write("### 📊 Hasil Klasifikasi Keseluruhan:")
+                    st.dataframe(results, use_container_width=True)
+                    
+                    # Tampilkan statistik jumlah ringkas
+                    total_pos = sum(1 for r in results if r["Prediksi"] == "Positive")
+                    total_neg = sum(1 for r in results if r["Prediksi"] == "Negative")
+                    
+                    col1, col2 = st.columns(2)
+                    col1.metric("Total Kategori Positive", total_pos)
+                    col2.metric("Total Kategori Negative", total_neg)
+                    
+        except Exception as e:
+            st.error(f"❌ File ZIP Anda rusak atau tidak bisa dibuka oleh sistem server: {e}")
