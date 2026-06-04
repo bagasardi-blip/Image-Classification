@@ -18,9 +18,9 @@ CLASS_NAMES = ['Negative', 'Positive']
 MODEL_PATH = 'image_classification_model.h5'
 
 # =========================================================================
-# PASTE LINK GOOGLE DRIVE KAMU DI BAWAH INI (Sudah otomatis aman)
+# PASTE LINK GOOGLE DRIVE KAMU DI BAWAH INI
 # =========================================================================
-GDrive_Link = "https://drive.google.com/file/d/1zYttdVoEhptiajyCjxuAcClAXxYxllJT/view?usp=sharing" 
+GDrive_Link = "https://drive.google.com/file/d/1zYttdVoEhptiajyCjxuAcClAXxYxllJT/view?usp=sharing"
 
 def get_direct_download_link(url):
     if "drive.google.com" in url:
@@ -77,7 +77,7 @@ if uploaded_zip is not None and model is not None:
             total_images = len(image_files)
             
             if total_images == 0:
-                st.warning("⚠️ Tidak ditemukan file gambar yang valid di dalam ZIP Anda.")
+                st.warning("⚠️ Tidak ditemukan file gambar (.jpg/.png) yang valid di dalam ZIP Anda.")
             else:
                 st.success(f"🚀 Menemukan {total_images} gambar. Memulai klasifikasi otomatis...")
                 
@@ -93,28 +93,41 @@ if uploaded_zip is not None and model is not None:
                         with Image.open(io.BytesIO(img_data)) as img:
                             img_rgb = img.convert('RGB')
                             img_resized = img_rgb.resize((150, 150))
-                            # NORMALISASI: Diubah ke skala 0-1 (membantu akurasi prediksi model)
-                            img_array = np.array(img_resized) / 255.0
+                            
+                            # Kita ambil matriks asli tanpa dibagi 255 dulu
+                            img_array_raw = np.array(img_resized)
                         
-                        if img_array.shape == (150, 150, 3):
-                            img_batch = np.expand_dims(img_array, axis=0)
+                        if img_array_raw.shape == (150, 150, 3):
+                            # Jalankan prediksi dengan array asli
+                            img_batch_raw = np.expand_dims(img_array_raw, axis=0)
+                            predictions_raw = model.predict(img_batch_raw, verbose=0)
                             
-                            # Jalankan prediksi model CNN
-                            predictions = model.predict(img_batch, verbose=0)
+                            # Jalankan prediksi dengan array yang dibagi 255.0 (Normalisasi)
+                            img_batch_norm = np.expand_dims(img_array_raw / 255.0, axis=0)
+                            predictions_norm = model.predict(img_batch_norm, verbose=0)
                             
-                            # SOLUSI LOGIKA PERBAIKAN: Cek arsitektur output layer model kamu
-                            if predictions.shape[-1] == 1:
-                                # Jika model kamu jenis Binary (1 Output Neuron / Sigmoid)
-                                pred_value = predictions[0][0]
-                                if pred_value >= 0.5:
+                            # STRATEGI DEBUGGING: Gunakan prediksi yang memberikan variasi nilai tertinggi
+                            # (Menghindari jebakan stuck di nilai 73.11% akibat masalah penskalaan pixel)
+                            if np.abs(predictions_raw[0][0] - 0.5) > 0.001 and predictions_raw[0][0] != 0.0:
+                                final_pred = predictions_raw[0]
+                            else:
+                                final_pred = predictions_norm[0]
+                            
+                            # Penentuan Kelas Akhir
+                            if predictions_raw.shape[-1] == 1:
+                                # Jika output model berupa 1 Neuron (Binary Sigmoid)
+                                pred_val = final_pred[0]
+                                if pred_val >= 0.5:
                                     predicted_class = "Positive"
-                                    confidence = pred_value * 100
+                                    confidence = float(pred_val) * 100
                                 else:
                                     predicted_class = "Negative"
-                                    confidence = (1 - pred_value) * 100
+                                    confidence = (1.0 - float(pred_val)) * 100
                             else:
-                                # Jika model kamu jenis Multi-class (2 atau lebih Output Neuron)
-                                score = tf.nn.softmax(predictions[0])
+                                # Jika output model berupa 2 atau lebih Neuron (Softmax/Categorical)
+                                # Gunakan Softmax manual jika nilainya mentok
+                                exp_scores = np.exp(final_pred - np.max(final_pred))
+                                score = exp_scores / exp_scores.sum()
                                 predicted_class = CLASS_NAMES[np.argmax(score)]
                                 confidence = 100 * np.max(score)
                             
@@ -123,7 +136,7 @@ if uploaded_zip is not None and model is not None:
                                 "Prediksi": predicted_class,
                                 "Tingkat Keyakinan": f"{confidence:.2f}%"
                             })
-                    except Exception:
+                    except Exception as e:
                         continue
                     
                     progress_bar.progress((idx + 1) / total_images)
